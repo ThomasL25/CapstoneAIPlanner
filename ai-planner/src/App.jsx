@@ -60,7 +60,7 @@ export default function App() {
               </defs>
             </svg>
           </div>
-          <span className="logo-text">AI Study <span className="logo-ai">Planner</span></span>
+           <span className="logo-ai">SPACE</span>
         </div>
         <nav className="nav">
           <button className="nav-link" onClick={() => setAboutOpen(true)}>About</button>
@@ -159,9 +159,9 @@ export default function App() {
                 </svg>
               </div>
             </div>
-            <h2 className="modal-title">About <span className="gradient-text">AI Study Planner</span></h2>
+            <h2 className="modal-title">About <span className="gradient-text">SPACE</span></h2>
             <p className="modal-body">
-              Sample text.
+              Space: or Scheduling, Planning, and Course Environment is a generative AI powered tool that helps you create a plan of the course/topic of you choice
             </p>
             <div className="modal-features">
               <div className="feature">
