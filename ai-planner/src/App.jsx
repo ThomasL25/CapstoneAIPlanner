@@ -71,8 +71,8 @@ export default function App() {
         <div className="hero">
           <p className="hero-eyebrow">Your AI-powered learning companion</p>
           <h1 className="hero-title">
-            Title or<br />
-            <span className="gradient-text">Slogan.</span>
+             Scheduling, Planning, and Course Environment or<br />
+            <span className="gradient-text">SPACE.</span>
           </h1>
           <p className="hero-sub">
             Ask anything — study guides, schedules, concept breakdowns.<br />
