@@ -1,8 +1,7 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { marked } from "marked";
 import "./App.css";
 
-// Configure marked for safe rendering
 marked.setOptions({ breaks: true, gfm: true });
 
 const SUGGESTIONS = [
@@ -12,24 +11,127 @@ const SUGGESTIONS = [
   { icon: "⏱️", text: "Make a Pomodoro schedule for finals week" },
 ];
 
-// Stable session ID per page load
 const SESSION_ID = crypto.randomUUID();
 const API_BASE = "http://localhost:3001";
+
+const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+const VOICE_SUPPORTED = !!SpeechRecognition;
+
+function stripMarkdown(text) {
+  return text
+    .replace(/#{1,6}\s+/g, "")
+    .replace(/\*\*(.*?)\*\*/g, "$1")
+    .replace(/\*(.*?)\*/g, "$1")
+    .replace(/`{1,3}(.*?)`{1,3}/gs, "$1")
+    .replace(/^\s*[-*+]\s+/gm, "• ")
+    .replace(/^\s*\d+\.\s+/gm, "")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/^>\s+/gm, "")
+    .replace(/---+/g, "─────────────────────")
+    .trim();
+}
+
+function buildReport(messages) {
+  const date = new Date().toLocaleString();
+  const lines = [
+    "SPACE — CHAT REPORT",
+    "Scheduling, Planning, and Course Environment",
+    `Generated: ${date}`,
+    "═══════════════════════════════════════════════════════",
+    "",
+  ];
+  messages.forEach((msg) => {
+    if (msg.role === "user") {
+      lines.push("YOU:");
+      lines.push(msg.content);
+    } else if (msg.role === "assistant" && !msg.error) {
+      lines.push("");
+      lines.push("SPACE:");
+      lines.push(stripMarkdown(msg.content));
+    }
+    lines.push("");
+    lines.push("───────────────────────────────────────────────────");
+    lines.push("");
+  });
+  return lines.join("\n");
+}
+
+function downloadReport(messages) {
+  const text = buildReport(messages);
+  const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `space-session-${new Date().toISOString().slice(0, 10)}.txt`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
 
 export default function App() {
   const [input, setInput] = useState("");
   const [aboutOpen, setAboutOpen] = useState(false);
-  const [micActive, setMicActive] = useState(false);
-  const [messages, setMessages] = useState([]); // { role, content, streaming? }
+  const [messages, setMessages] = useState([]);
   const [isStreaming, setIsStreaming] = useState(false);
+  const [micActive, setMicActive] = useState(false);
+  const [micError, setMicError] = useState("");
+  const recognitionRef = useRef(null);
   const textareaRef = useRef(null);
   const chatEndRef = useRef(null);
   const chatRef = useRef(null);
 
-  // Auto-scroll to bottom when new content arrives
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  const startRecognition = useCallback(() => {
+    if (!VOICE_SUPPORTED) {
+      setMicError("Voice input is not supported in this browser. Try Chrome or Edge.");
+      return;
+    }
+    setMicError("");
+    const recognition = new SpeechRecognition();
+    recognition.lang = "en-US";
+    recognition.interimResults = true;
+    recognition.maxAlternatives = 1;
+    recognitionRef.current = recognition;
+
+    recognition.onstart = () => setMicActive(true);
+    recognition.onresult = (e) => {
+      let finalTranscript = "";
+      let interim = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const t = e.results[i][0].transcript;
+        if (e.results[i].isFinal) finalTranscript += t;
+        else interim += t;
+      }
+      setInput(finalTranscript || interim);
+    };
+    recognition.onerror = (e) => {
+      setMicActive(false);
+      if (e.error === "not-allowed") {
+        setMicError("Microphone permission denied. Please allow access in your browser settings.");
+      } else if (e.error === "no-speech") {
+        setMicError("No speech detected. Try again.");
+      } else {
+        setMicError(`Voice error: ${e.error}`);
+      }
+    };
+    recognition.onend = () => {
+      setMicActive(false);
+      textareaRef.current?.focus();
+    };
+    recognition.start();
+  }, []);
+
+  const stopRecognition = useCallback(() => {
+    recognitionRef.current?.stop();
+    setMicActive(false);
+  }, []);
+
+  const toggleMic = () => {
+    if (micActive) stopRecognition();
+    else startRecognition();
+  };
 
   const handleSuggestion = (text) => {
     setInput(text);
@@ -38,11 +140,12 @@ export default function App() {
 
   const sendMessage = async (text) => {
     if (!text.trim() || isStreaming) return;
+    if (micActive) stopRecognition();
 
-    const userMsg = { role: "user", content: text };
-    const assistantMsg = { role: "assistant", content: "", streaming: true };
-
-    setMessages((prev) => [...prev, userMsg, assistantMsg]);
+    setMessages((prev) => [...prev,
+      { role: "user", content: text },
+      { role: "assistant", content: "", streaming: true },
+    ]);
     setInput("");
     setIsStreaming(true);
 
@@ -52,7 +155,6 @@ export default function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: text, sessionId: SESSION_ID }),
       });
-
       if (!res.ok) throw new Error(`Server error: ${res.status}`);
 
       const reader = res.body.getReader();
@@ -62,11 +164,9 @@ export default function App() {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split("\n");
-        buffer = lines.pop(); // keep incomplete line
-
+        buffer = lines.pop();
         for (const line of lines) {
           if (!line.startsWith("data: ")) continue;
           try {
@@ -75,56 +175,44 @@ export default function App() {
             if (payload.done) break;
             if (payload.delta) {
               setMessages((prev) => {
-                const updated = [...prev];
-                const last = updated[updated.length - 1];
-                return [...updated.slice(0, -1), { ...last, content: last.content + payload.delta }];
+                const last = prev[prev.length - 1];
+                return [...prev.slice(0, -1), { ...last, content: last.content + payload.delta }];
               });
             }
-          } catch {
-            // skip malformed lines
-          }
+          } catch { /* skip malformed lines */ }
         }
       }
     } catch (err) {
-      setMessages((prev) => {
-        const updated = [...prev];
-        return [...updated.slice(0, -1), {
-          role: "assistant",
-          content: `⚠️ Something went wrong: ${err.message}. Make sure the backend server is running.`,
-          error: true,
-        }];
-      });
+      setMessages((prev) => [...prev.slice(0, -1), {
+        role: "assistant",
+        content: `⚠️ Something went wrong: ${err.message}. Make sure the backend server is running.`,
+        error: true,
+      }]);
     } finally {
-      // Mark streaming done
       setMessages((prev) => {
-        const updated = [...prev];
-        const last = updated[updated.length - 1];
-        return [...updated.slice(0, -1), { ...last, streaming: false }];
+        const last = prev[prev.length - 1];
+        return [...prev.slice(0, -1), { ...last, streaming: false }];
       });
       setIsStreaming(false);
     }
   };
 
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    sendMessage(input);
-  };
-
+  const handleSubmit = (e) => { e.preventDefault(); sendMessage(input); };
   const handleKeyDown = (e) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      sendMessage(input);
-    }
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(input); }
   };
 
   const clearChat = async () => {
     setMessages([]);
+    setMicError("");
     await fetch(`${API_BASE}/api/session/${SESSION_ID}`, { method: "DELETE" }).catch(() => {});
   };
 
-  const toggleMic = () => setMicActive((v) => !v);
-
   const hasMessages = messages.length > 0;
+  const canDownload = hasMessages && messages.some((m) => m.role === "assistant" && !m.streaming && !m.error);
+  const micTitle = !VOICE_SUPPORTED
+    ? "Voice input not supported in this browser"
+    : micActive ? "Click to stop recording" : "Click to start voice input";
 
   return (
     <div className="app">
@@ -153,9 +241,14 @@ export default function App() {
               </defs>
             </svg>
           </div>
-          <span className="logo-text">AI Study <span className="logo-ai">Planner</span></span>
+          <span className="logo-ai">SPACE</span>
         </div>
         <nav className="nav">
+          {canDownload && (
+            <button className="nav-link nav-download" onClick={() => downloadReport(messages)} title="Download chat as .txt">
+              ⬇ Download Report
+            </button>
+          )}
           {hasMessages && (
             <button className="nav-link nav-clear" onClick={clearChat} title="Start a new conversation">
               New Chat
@@ -168,13 +261,12 @@ export default function App() {
       {/* MAIN */}
       <main className={"main" + (hasMessages ? " main--chat" : "")}>
 
-        {/* HERO — hidden once chat starts */}
         {!hasMessages && (
           <div className="hero">
             <p className="hero-eyebrow">Your AI-powered learning companion</p>
             <h1 className="hero-title">
-              Title or<br />
-              <span className="gradient-text">Slogan.</span>
+              Scheduling, Planning, and Course Environment or<br />
+              <span className="gradient-text">SPACE.</span>
             </h1>
             <p className="hero-sub">
               Ask anything — study guides, schedules, concept breakdowns.<br />
@@ -224,14 +316,26 @@ export default function App() {
           </div>
         )}
 
-        {/* INPUT */}
+        {/* INPUT SECTION */}
         <div className={"input-section" + (hasMessages ? " input-section--chat" : "")}>
+
+          {micError && (
+            <div className="mic-error-banner">
+              ⚠️ {micError}
+              <button className="mic-error-close" onClick={() => setMicError("")}>✕</button>
+            </div>
+          )}
+
           <form className="input-wrapper" onSubmit={handleSubmit}>
             <div className="input-box">
               <textarea
                 ref={textareaRef}
                 className="input-field"
-                placeholder={isStreaming ? "Waiting for response…" : "What would you like to study today?"}
+                placeholder={
+                  micActive ? "Listening… speak now"
+                  : isStreaming ? "Waiting for response…"
+                  : "What would you like to study today?"
+                }
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
@@ -241,9 +345,9 @@ export default function App() {
               <div className="input-actions">
                 <button
                   type="button"
-                  className={"mic-btn" + (micActive ? " mic-active" : "")}
+                  className={"mic-btn" + (micActive ? " mic-active" : "") + (!VOICE_SUPPORTED ? " mic-unsupported" : "")}
                   onClick={toggleMic}
-                  title="Voice input (coming soon)"
+                  title={micTitle}
                   disabled={isStreaming}
                 >
                   <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" width="18" height="18">
@@ -271,10 +375,13 @@ export default function App() {
                 </button>
               </div>
             </div>
-            <p className="input-hint">Press <kbd>Enter</kbd> to send · <kbd>Shift+Enter</kbd> for new line</p>
+            <p className="input-hint">
+              Press <kbd>Enter</kbd> to send · <kbd>Shift+Enter</kbd> for new line
+              {VOICE_SUPPORTED && !micActive && <> · <kbd>🎤</kbd> for voice</>}
+              {micActive && <> · <span className="hint-listening">🔴 Listening — click mic to stop</span></>}
+            </p>
           </form>
 
-          {/* SUGGESTIONS — only shown before first message */}
           {!hasMessages && (
             <div className="suggestions">
               <p className="suggestions-label">Try asking…</p>
@@ -321,8 +428,10 @@ export default function App() {
                 </svg>
               </div>
             </div>
-            <h2 className="modal-title">About <span className="gradient-text">AI Study Planner</span></h2>
-            <p className="modal-body">Sample text.</p>
+            <h2 className="modal-title">About <span className="gradient-text">SPACE</span></h2>
+            <p className="modal-body">
+              SPACE — Scheduling, Planning, and Course Environment — is a generative AI powered tool that helps you create a plan for the course or topic of your choice.
+            </p>
             <div className="modal-features">
               <div className="feature">
                 <span className="feature-icon">🗓️</span>
