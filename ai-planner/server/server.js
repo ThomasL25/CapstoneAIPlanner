@@ -16,6 +16,7 @@ app.use(express.json());
 // System prompt — edit this to shape how the AI behaves
 const SYSTEM_PROMPT = `You are an expert AI study planner and academic tutor. 
 Your role is to help students with:
+- Focus on giving good sources and tools for the information
 - Creating structured study guides and outlines
 - Building personalized study schedules and plans
 - Explaining complex concepts clearly and at the right level
