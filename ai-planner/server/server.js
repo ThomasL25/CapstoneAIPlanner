@@ -10,7 +10,7 @@ const PORT = process.env.PORT || 3001;
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-app.use(cors({ origin: "http://localhost:5173" }));
+app.use(cors({ origin: ["http://localhost:5173", "https://spaceaiplanner.com", "https://www.spaceaiplanner.com"] }));
 app.use(express.json());
 
 // System prompt — edit this to shape how the AI behaves

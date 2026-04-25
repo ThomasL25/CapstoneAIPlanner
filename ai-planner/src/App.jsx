@@ -12,7 +12,7 @@ const SUGGESTIONS = [
 ];
 
 const SESSION_ID = crypto.randomUUID();
-const API_BASE = "http://localhost:3001";
+const API_BASE = "https://space-backend-r82z.onrender.com";
 
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 const VOICE_SUPPORTED = !!SpeechRecognition;
